@@ -9,6 +9,15 @@ pub struct FlatVec<T> {
     marker: PhantomData<T>,
 }
 
+impl<T> std::fmt::Debug for FlatVec<T> {
+    fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result {
+        fmt.debug_struct("FlatVec")
+            .field("data", &self.data)
+            .field("ends", &self.ends)
+            .finish()
+    }
+}
+
 impl<T> Default for FlatVec<T> {
     #[inline]
     fn default() -> Self {
@@ -29,6 +38,11 @@ impl<T> FlatVec<T> {
     #[inline]
     pub fn len(&self) -> usize {
         self.ends.len()
+    }
+
+    #[inline]
+    pub fn data_len(&self) -> usize {
+        self.data.len()
     }
 
     #[inline]
@@ -81,10 +95,12 @@ impl<T> FlatVec<T> {
 pub struct Storage<'a>(&'a mut Vec<u8>);
 
 impl Storage<'_> {
+    #[inline]
     pub fn reserve(&mut self, len: usize) {
         self.0.reserve(len);
     }
 
+    #[inline]
     pub fn extend<Iter, Bor>(&mut self, iter: Iter)
     where
         Iter: IntoIterator<Item = Bor>,
@@ -163,62 +179,11 @@ mod tests {
     }
 
     #[test]
-    fn intoiter() {
+    fn iter() {
         let mut names = FlatVec::new();
         names.push(&"Cerryl".to_string());
         names.push(&"Jeslek".to_string());
         let as_vec = names.into_iter::<String>().collect::<Vec<_>>();
         assert_eq!(as_vec, vec!["Cerryl".to_string(), "Jeslek".to_string()]);
-    }
-
-    #[derive(PartialEq, Eq, Debug)]
-    pub struct DomainName {
-        ttl: u32,
-        time_seen: u32,
-        name: Vec<u8>,
-    }
-
-    #[derive(PartialEq, Eq, Debug)]
-    pub struct DomainNameRef<'a> {
-        ttl: u32,
-        time_seen: u32,
-        name: &'a [u8],
-    }
-
-    impl ErectFrom<DomainName> for DomainName {
-        fn erect_from(data: &[u8]) -> Self {
-            Self {
-                time_seen: u32::from_ne_bytes([data[0], data[1], data[2], data[3]]),
-                ttl: u32::from_ne_bytes([data[4], data[5], data[6], data[7]]),
-                name: data[8..].to_vec(),
-            }
-        }
-    }
-
-    impl FlattenInto<DomainName> for DomainNameRef<'_> {
-        fn flatten_into(&self, mut store: Storage) {
-            store.reserve(self.name.len() + 8);
-            store.extend(&self.time_seen.to_ne_bytes());
-            store.extend(&self.ttl.to_ne_bytes());
-            store.extend(self.name.iter().cloned());
-        }
-    }
-
-    #[test]
-    fn complex_type() {
-        let mut names = FlatVec::new();
-        names.push(&DomainNameRef {
-            ttl: 60,
-            time_seen: 31415,
-            name: &b"google.com"[..],
-        });
-        assert_eq!(
-            names.pop(),
-            Some(DomainName {
-                ttl: 60,
-                time_seen: 31415,
-                name: b"google.com".to_vec()
-            })
-        );
     }
 }
