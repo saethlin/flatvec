@@ -1,0 +1,11 @@
+name: CI/CD
+
+on: [push]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v1
+      - name: Build
+        run: docker run -v$PWD:/root rust:alpine sh -c "cd /root && cargo test"

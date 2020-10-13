@@ -6,4 +6,4 @@ This crate provides a container `FlatVec` and two traits, `IntoFlat` and `FromFl
 
 This permits collapsing indirections while also permitting minimal/zero-copy usage, as demonstrated in `examples/domain_name.rs`.
 
-This interface also permis some interesting other applications, as in `examples/gzip.rs`.
+This interface also permits some interesting other applications, as in `examples/gzip.rs`.
