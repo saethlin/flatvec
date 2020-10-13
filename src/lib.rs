@@ -29,7 +29,7 @@ impl<T> Default for FlatVec<T> {
     }
 }
 
-impl<T> FlatVec<T> {
+impl<'a, T: 'a> FlatVec<T> {
     #[inline]
     pub fn new() -> Self {
         Self::default()
@@ -51,19 +51,6 @@ impl<T> FlatVec<T> {
     }
 
     #[inline]
-    pub fn pop<Erected>(&mut self) -> Option<Erected>
-    where
-        Erected: ErectFrom<T>,
-    {
-        let end = *self.ends.last()?;
-        let start = *self.ends.iter().rev().nth(1).unwrap_or(&0);
-        let output = Erected::erect_from(&self.data[start..end]);
-        self.data.truncate(start);
-        self.ends.pop();
-        Some(output)
-    }
-
-    #[inline]
     pub fn remove(&mut self, index: usize) {
         let end = self.ends[index];
         let start = if index == 0 { 0 } else { self.ends[index - 1] };
@@ -74,24 +61,38 @@ impl<T> FlatVec<T> {
     }
 
     #[inline]
-    pub fn push<Source>(&mut self, input: &Source)
+    pub fn push<Source>(&mut self, input: Source)
     where
-        Source: FlattenInto<T> + ?Sized,
+        Source: IntoFlat<T>,
     {
-        input.flatten_into(Storage(&mut self.data));
+        input.into_flat(&mut Storage(&mut self.data));
         self.ends.push(self.data.len());
     }
 
     #[inline]
-    pub fn into_iter<Erected: ErectFrom<T>>(self) -> FlatVecIntoIter<Erected, T> {
-        FlatVecIntoIter {
-            inner: self,
-            cursor: 0,
-            marker: std::marker::PhantomData::default(),
-        }
+    pub fn get<Dest: 'a>(&'a self, index: usize) -> Option<Dest>
+    where
+        Dest: FromFlat<'a, T>,
+    {
+        let end = *self.ends.get(index)?;
+        let start = if index == 0 { 0 } else { self.ends[index - 1] };
+        Some(Dest::from_flat(&self.data[start..end]))
+    }
+
+    #[inline]
+    pub fn iter<Dest: 'a>(&'a self) -> impl Iterator<Item = Dest> + 'a
+    where
+        Dest: FromFlat<'a, T>,
+    {
+        std::iter::once(&0usize)
+            .chain(self.ends.iter())
+            .zip(self.ends.iter())
+            .map(move |(&start, &end)| Dest::from_flat(&self.data[start..end]))
     }
 }
 
+/// A wrapper over the innards of a `FlatVec` which exposes mutating operations which cannot
+/// corrupt other elements during a push
 pub struct Storage<'a>(&'a mut Vec<u8>);
 
 impl Storage<'_> {
@@ -110,57 +111,39 @@ impl Storage<'_> {
     }
 }
 
-pub trait FlattenInto<Flattened> {
-    fn flatten_into(&self, storage: Storage);
+pub trait IntoFlat<Flattened> {
+    fn into_flat(self, storage: &mut Storage);
 }
 
-pub trait ErectFrom<Flattened> {
-    fn erect_from(data: &[u8]) -> Self;
+pub trait FromFlat<'a, Flattened> {
+    fn from_flat(data: &'a [u8]) -> Self;
 }
 
-pub struct FlatVecIntoIter<Erected, T> {
-    inner: FlatVec<T>,
-    cursor: usize,
-    marker: std::marker::PhantomData<Erected>,
-}
-
-impl<Erected, T> Iterator for FlatVecIntoIter<Erected, T>
-where
-    Erected: ErectFrom<T>,
-{
-    type Item = Erected;
-
+impl IntoFlat<String> for String {
     #[inline]
-    fn next(&mut self) -> Option<Self::Item> {
-        let end = *self.inner.ends.get(self.cursor)?;
-        let start = if self.cursor == 0 {
-            0
-        } else {
-            self.inner.ends[self.cursor - 1]
-        };
-        self.cursor += 1;
-        Some(Erected::erect_from(&self.inner.data[start..end]))
-    }
-}
-
-impl FlattenInto<String> for String {
-    #[inline]
-    fn flatten_into(&self, mut store: Storage<'_>) {
+    fn into_flat(self, store: &mut Storage) {
         store.extend(self.bytes());
     }
 }
 
-impl ErectFrom<String> for String {
+impl FromFlat<'_, String> for String {
     #[inline]
-    fn erect_from(data: &[u8]) -> Self {
+    fn from_flat(data: &[u8]) -> Self {
         String::from_utf8(data.to_vec()).unwrap()
     }
 }
 
-impl FlattenInto<String> for str {
+impl IntoFlat<String> for &str {
     #[inline]
-    fn flatten_into(&self, mut store: Storage<'_>) {
+    fn into_flat(self, store: &mut Storage) {
         store.extend(self.bytes());
+    }
+}
+
+impl<'a> FromFlat<'a, String> for &'a str {
+    #[inline]
+    fn from_flat(data: &'a [u8]) -> &'a str {
+        std::str::from_utf8(&data).unwrap()
     }
 }
 
@@ -169,21 +152,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn push_pop() {
+    fn push_get() {
         let mut names = FlatVec::new();
         names.push("Cerryl");
-        names.push(&"Jeslek".to_string());
-        assert_eq!(names.pop(), Some("Jeslek".to_string()));
-        assert_eq!(names.pop(), Some("Cerryl".to_string()));
-        assert_eq!(names.pop::<String>(), None);
+        names.push("Jeslek".to_string());
+        assert_eq!(names.get(0), Some("Cerryl"));
+        assert_eq!(names.get(1), Some("Jeslek"));
+        assert_eq!(names.get::<String>(2), None);
     }
 
     #[test]
     fn iter() {
         let mut names = FlatVec::new();
-        names.push(&"Cerryl".to_string());
-        names.push(&"Jeslek".to_string());
-        let as_vec = names.into_iter::<String>().collect::<Vec<_>>();
+        names.push("Cerryl".to_string());
+        names.push("Jeslek".to_string());
+        let as_vec = names.iter::<String>().collect::<Vec<_>>();
         assert_eq!(as_vec, vec!["Cerryl".to_string(), "Jeslek".to_string()]);
     }
 }

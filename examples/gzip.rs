@@ -1,5 +1,4 @@
-use flatvec::{ErectFrom, FlatVec, FlattenInto, Storage};
-use libflate::gzip;
+use flatvec::{FlatVec, FromFlat, IntoFlat, Storage};
 
 fn main() {
     let mut vec = FlatVec::new();
@@ -7,15 +6,15 @@ fn main() {
     println!("Original length: {}", data_to_insert.len());
     vec.push(data_to_insert);
     println!("Internal length: {}", vec.data_len());
-    let out: Vec<u8> = vec.pop().unwrap();
+    let out: Vec<u8> = vec.get(0).unwrap();
     assert_eq!(&out, &data_to_insert);
 }
 
-struct WriteAdapter<'a>(Storage<'a>);
+struct WriteAdapter<'a, 'b>(&'a mut Storage<'b>);
 
-impl std::io::Write for WriteAdapter<'_> {
+impl std::io::Write for WriteAdapter<'_, '_> {
     fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
-        self.0.extend(data.into_iter());
+        self.0.extend(data.iter());
         Ok(data.len())
     }
 
@@ -26,8 +25,8 @@ impl std::io::Write for WriteAdapter<'_> {
 
 struct CompressedBytes(Vec<u8>);
 
-impl FlattenInto<CompressedBytes> for [u8] {
-    fn flatten_into(&self, store: Storage) {
+impl IntoFlat<CompressedBytes> for &[u8] {
+    fn into_flat(self, store: &mut Storage) {
         use std::io::Write;
         let mut encoder = libflate::gzip::Encoder::new(WriteAdapter(store)).unwrap();
         encoder.write_all(&self).unwrap();
@@ -35,8 +34,8 @@ impl FlattenInto<CompressedBytes> for [u8] {
     }
 }
 
-impl ErectFrom<CompressedBytes> for Vec<u8> {
-    fn erect_from(data: &[u8]) -> Self {
+impl FromFlat<'_, CompressedBytes> for Vec<u8> {
+    fn from_flat(data: &[u8]) -> Self {
         use std::io::Read;
         let mut out = Vec::new();
         libflate::gzip::Decoder::new(data)
