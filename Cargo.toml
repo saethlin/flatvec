@@ -3,10 +3,12 @@ name = "flatvec"
 version = "0.1.0"
 authors = ["Ben Kimock <kimockb@gmail.com>"]
 edition = "2018"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+license = "MIT OR Apache-2.0"
+description = """
+An indirection-collapsing container that stores all its elements in at most 2 allocations
+"""
 
 [dependencies]
 
 [dev-dependencies]
-libflate = "*"
+libflate = "1.0"
