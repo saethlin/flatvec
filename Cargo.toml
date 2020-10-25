@@ -1,6 +1,6 @@
 [package]
 name = "flatvec"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Ben Kimock <kimockb@gmail.com>"]
 edition = "2018"
 license = "MIT OR Apache-2.0"
@@ -9,6 +9,7 @@ An indirection-collapsing container that stores all its elements in at most 2 al
 """
 
 [dependencies]
+smallvec = { version = "1.4", features = ["union"], optional = true }
 
 [dev-dependencies]
 libflate = "1.0"

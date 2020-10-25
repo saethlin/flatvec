@@ -10,9 +10,9 @@ fn main() {
     assert_eq!(&out, &data_to_insert);
 }
 
-struct WriteAdapter<'a, 'b>(&'a mut Storage<'b>);
+struct WriteAdapter<'a>(Storage<'a>);
 
-impl std::io::Write for WriteAdapter<'_, '_> {
+impl std::io::Write for WriteAdapter<'_> {
     fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
         self.0.extend(data.iter());
         Ok(data.len())
@@ -26,7 +26,7 @@ impl std::io::Write for WriteAdapter<'_, '_> {
 struct CompressedBytes(Vec<u8>);
 
 impl IntoFlat<CompressedBytes> for &[u8] {
-    fn into_flat(self, store: &mut Storage) {
+    fn into_flat(self, store: Storage) {
         use std::io::Write;
         let mut encoder = libflate::gzip::Encoder::new(WriteAdapter(store)).unwrap();
         encoder.write_all(&self).unwrap();

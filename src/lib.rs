@@ -19,13 +19,24 @@
 
 #![forbid(unsafe_code)]
 
+#[cfg(feature = "smallvec")]
+use smallvec::SmallVec;
 use std::marker::PhantomData;
 
+#[cfg(not(feature = "smallvec"))]
 /// An indirection-collapsing container with minimal allocation
 #[derive(Clone)]
 pub struct FlatVec<T> {
     data: Vec<u8>,
     ends: Vec<usize>,
+    marker: PhantomData<T>,
+}
+
+#[cfg(feature = "smallvec")]
+#[derive(Clone)]
+pub struct FlatVec<T> {
+    data: SmallVec<[u8; 16]>,
+    ends: SmallVec<[usize; 2]>,
     marker: PhantomData<T>,
 }
 
@@ -42,8 +53,8 @@ impl<T> Default for FlatVec<T> {
     #[inline]
     fn default() -> Self {
         Self {
-            data: Vec::new(),
-            ends: Vec::new(),
+            data: Default::default(),
+            ends: Default::default(),
             marker: PhantomData::default(),
         }
     }
@@ -93,7 +104,7 @@ impl<'a, T: 'a> FlatVec<T> {
     where
         Source: IntoFlat<T>,
     {
-        input.into_flat(&mut Storage(&mut self.data));
+        input.into_flat(Storage(&mut self.data));
         self.ends.push(self.data.len());
     }
 
@@ -103,9 +114,13 @@ impl<'a, T: 'a> FlatVec<T> {
     where
         Dest: FromFlat<'a, T>,
     {
-        let end = *self.ends.get(index)?;
-        let start = if index == 0 { 0 } else { self.ends[index - 1] };
-        Some(Dest::from_flat(&self.data[start..end]))
+        if index >= self.ends.len() {
+            None
+        } else {
+            let end = self.ends[index];
+            let start = if index == 0 { 0 } else { self.ends[index - 1] };
+            Some(Dest::from_flat(&self.data[start..end]))
+        }
     }
 
     /// Returns an iterator that constructs a `Dest` from each element's stored representation
@@ -123,7 +138,11 @@ impl<'a, T: 'a> FlatVec<T> {
 
 /// A wrapper over the innards of a `FlatVec` which exposes mutating operations which cannot
 /// corrupt other elements during a push
+#[cfg(not(feature = "smallvec"))]
 pub struct Storage<'a>(&'a mut Vec<u8>);
+
+#[cfg(feature = "smallvec")]
+pub struct Storage<'a>(&'a mut SmallVec<[u8; 16]>);
 
 impl Storage<'_> {
     /// Reserves capacity for at least `len` additional bytes
@@ -145,7 +164,7 @@ impl Storage<'_> {
 
 /// Implement `IntoFlat<Flattened> for Source` to insert a `Source` into a `FlatVec<Flattened>`
 pub trait IntoFlat<Flattened> {
-    fn into_flat(self, storage: &mut Storage);
+    fn into_flat(self, storage: Storage);
 }
 
 /// Implement `FromFlat<'a, Flattened> for Dest` to get a `Dest` from a `FlatVec<Flattened>`
@@ -155,7 +174,7 @@ pub trait FromFlat<'a, Flattened> {
 
 impl IntoFlat<String> for String {
     #[inline]
-    fn into_flat(self, store: &mut Storage) {
+    fn into_flat(self, mut store: Storage) {
         store.extend(self.bytes());
     }
 }
@@ -169,7 +188,7 @@ impl FromFlat<'_, String> for String {
 
 impl IntoFlat<String> for &str {
     #[inline]
-    fn into_flat(self, store: &mut Storage) {
+    fn into_flat(self, mut store: Storage) {
         store.extend(self.bytes());
     }
 }
@@ -187,7 +206,7 @@ where
     T: std::borrow::Borrow<u8>,
 {
     #[inline]
-    fn into_flat(self, store: &mut Storage) {
+    fn into_flat(self, mut store: Storage) {
         store.extend(self.into_iter());
     }
 }

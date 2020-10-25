@@ -15,6 +15,14 @@ fn main() {
             name: b"google.com".to_vec()
         })
     );
+    assert_eq!(
+        names.get(0),
+        Some(DomainNameRef {
+            ttl: 60,
+            time_seen: 31415,
+            name: b"google.com"
+        })
+    );
 }
 
 #[derive(PartialEq, Eq, Debug)]
@@ -33,6 +41,7 @@ pub struct DomainNameRef<'a> {
 
 impl FromFlat<'_, DomainName> for DomainName {
     fn from_flat(data: &[u8]) -> Self {
+        assert!(data.len() >= 8);
         Self {
             time_seen: u32::from_ne_bytes([data[0], data[1], data[2], data[3]]),
             ttl: u32::from_ne_bytes([data[4], data[5], data[6], data[7]]),
@@ -41,8 +50,19 @@ impl FromFlat<'_, DomainName> for DomainName {
     }
 }
 
+impl<'a> FromFlat<'a, DomainName> for DomainNameRef<'a> {
+    fn from_flat(data: &'a [u8]) -> Self {
+        assert!(data.len() >= 8);
+        Self {
+            time_seen: u32::from_ne_bytes([data[0], data[1], data[2], data[3]]),
+            ttl: u32::from_ne_bytes([data[4], data[5], data[6], data[7]]),
+            name: &data[8..],
+        }
+    }
+}
+
 impl IntoFlat<DomainName> for DomainNameRef<'_> {
-    fn into_flat(self, store: &mut Storage) {
+    fn into_flat(self, mut store: Storage) {
         store.reserve(self.name.len() + 8);
         store.extend(&self.time_seen.to_ne_bytes());
         store.extend(&self.ttl.to_ne_bytes());
