@@ -1,7 +1,8 @@
 //! An indirection-collapsing container that generalizes [nested](https://crates.io/crates/nested).
 //!
 //! A `FlatVec` can be used like a `Vec<String>` or `Vec<Vec<u8>>`, but with a maximum of 2 heap
-//! allocations instead of n + 1.
+//! allocations instead of n + 1. With the `smallvec` feature enabled, these allocations are
+//! delayed until the main storage capacity exceeds 16 and the length exceeds 2.
 //!
 //! Insertion into and retrieval from a `FlatVec` is mediated by two traits, `IntoFlat` and
 //! `FromFlat`, which are both parameterized on two types. The simplest way to use this crate is to
