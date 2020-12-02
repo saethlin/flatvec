@@ -14,3 +14,7 @@ smallvec = { version = "1.4", features = ["union"], optional = true }
 
 [dev-dependencies]
 libflate = "1.0"
+
+[profile.release]
+codegen-units = 1
+debug = 2
