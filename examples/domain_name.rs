@@ -1,28 +1,29 @@
 use flatvec::{FlatVec, FromFlat, IntoFlat, Storage};
 
 fn main() {
-    let mut names = FlatVec::new();
-    names.push(DomainNameRef {
-        ttl: 60,
-        time_seen: 31415,
-        name: &b"google.com"[..],
-    });
-    assert_eq!(
-        names.get(0),
-        Some(DomainName {
-            ttl: 60,
-            time_seen: 31415,
-            name: b"google.com".to_vec()
-        })
-    );
-    assert_eq!(
-        names.get(0),
-        Some(DomainNameRef {
-            ttl: 60,
-            time_seen: 31415,
-            name: b"google.com"
-        })
-    );
+    for _ in 0..10_000 {
+        let mut names: FlatVec<_, u32> = FlatVec::new();
+        for _ in 0..1_000 {
+            names.push(DomainNameRef {
+                ttl: 60,
+                time_seen: 31415,
+                name: &b"google.com"[..],
+            });
+        }
+        let mut count = 0;
+        for name in names.iter::<DomainNameRef>() {
+            assert_eq!(
+                name,
+                DomainNameRef {
+                    ttl: 60,
+                    time_seen: 31415,
+                    name: &b"google.com"[..],
+                }
+            );
+            count += 1;
+        }
+        assert_eq!(count, 1_000);
+    }
 }
 
 #[derive(PartialEq, Eq, Debug)]
@@ -63,9 +64,18 @@ impl<'a> FromFlat<'a, DomainName> for DomainNameRef<'a> {
 
 impl IntoFlat<DomainName> for DomainNameRef<'_> {
     fn into_flat(self, mut store: Storage) {
-        store.reserve(self.name.len() + 8);
-        store.extend(&self.time_seen.to_ne_bytes());
-        store.extend(&self.ttl.to_ne_bytes());
-        store.extend(self.name.iter().cloned());
+        store.extend(
+            self.time_seen
+                .to_ne_bytes()
+                .iter()
+                .chain(self.ttl.to_ne_bytes().iter())
+                .chain(self.name.iter()),
+        );
+        /*
+        let data = store.allocate(4 + 4 + self.name.len());
+        data[..4].copy_from_slice(&self.time_seen.to_ne_bytes());
+        data[4..8].copy_from_slice(&self.ttl.to_ne_bytes());
+        data[8..].copy_from_slice(self.name);
+        */
     }
 }
