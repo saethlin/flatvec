@@ -1,8 +1,7 @@
 //! An indirection-collapsing container that generalizes [nested](https://crates.io/crates/nested).
 //!
 //! A `FlatVec` can be used like a `Vec<String>` or `Vec<Vec<u8>>`, but with a maximum of 2 heap
-//! allocations instead of n + 1. With the `smallvec` feature enabled, these allocations are
-//! delayed until the main storage capacity exceeds 16 and the length exceeds 2.
+//! allocations instead of n + 1.
 //!
 //! Insertion into and retrieval from a `FlatVec` is mediated by two traits, `IntoFlat` and
 //! `FromFlat`, which are both parameterized on two types. The simplest way to use this crate is to
@@ -21,29 +20,18 @@
 #![forbid(unsafe_code)]
 
 use core::borrow::Borrow;
-use core::convert::TryInto;
+use core::convert::{TryFrom, TryInto};
 use core::fmt;
 use core::iter;
 use core::marker::PhantomData;
 use core::str;
-#[cfg(feature = "smallvec")]
-use smallvec::SmallVec;
 
-#[cfg(not(feature = "smallvec"))]
 /// An indirection-collapsing container with minimal allocation
 #[derive(Clone)]
 pub struct FlatVec<T, IndexTy> {
     data: Box<[u8]>,
     data_len: usize,
     ends: Vec<IndexTy>,
-    marker: PhantomData<T>,
-}
-
-#[cfg(feature = "smallvec")]
-#[derive(Clone)]
-pub struct FlatVec<T, IndexTy> {
-    data: SmallVec<[u8; 16]>,
-    ends: SmallVec<[IndexTy; 2]>,
     marker: PhantomData<T>,
 }
 
@@ -63,9 +51,9 @@ impl<T> Default for FlatVec<T, usize> {
     #[inline]
     fn default() -> Self {
         Self {
-            data: Default::default(),
+            data: Box::default(),
             data_len: 0,
-            ends: Default::default(),
+            ends: Vec::default(),
             marker: PhantomData::default(),
         }
     }
@@ -73,24 +61,26 @@ impl<T> Default for FlatVec<T, usize> {
 
 impl<'a, T: 'a, IndexTy> FlatVec<T, IndexTy>
 where
-    IndexTy: TryInto<usize> + Copy + core::ops::Sub,
-    usize: TryInto<IndexTy>,
-    <IndexTy as TryInto<usize>>::Error: fmt::Debug,
-    <usize as TryInto<IndexTy>>::Error: fmt::Debug,
+    IndexTy: TryFrom<usize> + Copy + core::ops::Sub,
+    usize: TryFrom<IndexTy>,
+    <IndexTy as TryFrom<usize>>::Error: fmt::Debug,
+    <usize as TryFrom<IndexTy>>::Error: fmt::Debug,
 {
     /// Create a new `FlatVec`
     #[inline]
+    #[must_use]
     pub fn new() -> Self {
         Self {
-            data: Default::default(),
+            data: Box::default(),
             data_len: 0,
-            ends: Default::default(),
+            ends: Vec::default(),
             marker: PhantomData::default(),
         }
     }
 
     /// Returns the number of `T` in a `FlatVec<T>`
     #[inline]
+    #[must_use]
     pub fn len(&self) -> usize {
         self.ends.len()
     }
@@ -98,26 +88,35 @@ where
     /// Returns the number heap bytes used to store the elements of a `FlatVec`, but not the bytes
     /// used to store the indices
     #[inline]
+    #[must_use]
     pub fn data_len(&self) -> usize {
         self.data_len
     }
 
     #[inline]
+    #[must_use]
     pub fn data_capacity(&self) -> usize {
         self.data.len()
     }
 
     /// Returns true if the len is 0
     #[inline]
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.ends.len() == 0
+    }
+
+    #[inline]
+    pub fn clear(&mut self) {
+        self.data_len = 0;
+        self.ends.clear();
     }
 
     /// Removes the `index`th element of a `FlatVec`.
     /// This function is `O(self.len() + self.data_len())`
     #[inline]
     pub fn remove(&mut self, index: usize) {
-        let end = self.ends[index].try_into().unwrap();
+        let end: usize = self.ends[index].try_into().unwrap();
         let start = if index == 0 {
             0
         } else {
@@ -128,7 +127,7 @@ where
         let removed_len = end - start;
         self.data_len -= removed_len;
         self.ends.iter_mut().skip(index).for_each(|end| {
-            let change: usize = (*end).try_into().unwrap() - removed_len;
+            let change = usize::try_from(*end).unwrap() - removed_len;
             *end = change.try_into().unwrap();
         });
     }
@@ -148,6 +147,7 @@ where
 
     /// Construct a `Dest` from the `index`th element's stored representation
     #[inline]
+    #[must_use]
     pub fn get<Dest: 'a>(&'a self, index: usize) -> Option<Dest>
     where
         Dest: FromFlat<'a, T>,
@@ -171,7 +171,7 @@ where
     where
         Dest: FromFlat<'a, T>,
     {
-        iter::once(0usize)
+        iter::once(0)
             .chain(self.ends.iter().copied().map(|v| v.try_into().unwrap()))
             .zip(self.ends.iter().copied().map(|v| v.try_into().unwrap()))
             .map(move |(start, end)| Dest::from_flat(&self.data[start..end]))
@@ -180,14 +180,10 @@ where
 
 /// A wrapper over the innards of a `FlatVec` which exposes mutating operations which cannot
 /// corrupt other elements during a push
-#[cfg(not(feature = "smallvec"))]
 pub struct Storage<'a> {
     data: &'a mut Box<[u8]>,
     data_len: &'a mut usize,
 }
-
-#[cfg(feature = "smallvec")]
-pub struct Storage<'a>(&'a mut SmallVec<[u8; 16]>);
 
 impl Storage<'_> {
     #[inline(never)]
@@ -214,21 +210,36 @@ impl Storage<'_> {
     }
 
     /// Inserts the bytes described by `iter`
-    /// In general, due to missed optimizations, this is slower than calling `allocate` with the
-    /// exact size required.
+    /// In general, due to missed optimizations, this is ~2x slower than calling `allocate` when
+    /// the exact size of the inserted object is known.
     #[inline]
     pub fn extend<Iter, T>(&mut self, iter: Iter)
     where
         Iter: IntoIterator<Item = T>,
         T: Borrow<u8>,
     {
-        let mut iter = iter.into_iter().map(|b| *b.borrow());
+        let iter = iter.into_iter();
 
+        // When the iterator provides a precise size hint, use the allocate interface.
+        // This path is ~5x faster than the one below
+        let hint = iter.size_hint();
+        if Some(hint.0) == hint.1 {
+            let data = self.allocate(hint.0);
+            for (src, dst) in iter.into_iter().zip(data.iter_mut()) {
+                *dst = *src.borrow();
+            }
+            return;
+        }
+
+        let mut iter = iter.map(|b| *b.borrow());
+
+        // Insert as many elements as possible into already-allocated space
         for (out, val) in self.data.iter_mut().skip(*self.data_len).zip(&mut iter) {
             *out = val;
             *self.data_len += 1;
         }
 
+        // If there are elements remaining in the iterator, allocate space for them
         if let Some(val) = iter.next() {
             let mut data = std::mem::take(self.data).into_vec();
             data.push(val);
@@ -242,25 +253,10 @@ impl Storage<'_> {
             if data.capacity() > data.len() {
                 data.resize(data.capacity(), 0);
             }
-            let empty = std::mem::swap(self.data, &mut data.into_boxed_slice());
-            std::mem::forget(empty);
+            let mut data = data.into_boxed_slice();
+            std::mem::swap(self.data, &mut data);
+            std::mem::forget(data);
         }
-    }
-
-    #[inline]
-    pub fn extend_exact<OuterIter, InnerIter, T>(&mut self, iter: OuterIter)
-    where
-        OuterIter: IntoIterator<Item = T, IntoIter = InnerIter>,
-        InnerIter: Iterator<Item = T> + ExactSizeIterator,
-        T: Borrow<u8>,
-    {
-        let iter = iter.into_iter();
-        let chunk = self.allocate(iter.len());
-        let mut iter = iter.into_iter();
-        for (out, val) in chunk.iter_mut().zip(&mut iter) {
-            *out = *val.borrow();
-        }
-        assert!(iter.next().is_none());
     }
 }
 
@@ -309,7 +305,7 @@ where
 {
     #[inline]
     fn into_flat(self, mut store: Storage) {
-        store.extend(self.into_iter());
+        store.extend(self);
     }
 }
 

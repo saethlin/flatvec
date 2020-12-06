@@ -10,7 +10,6 @@ An indirection-collapsing container that stores all its elements in at most 2 al
 repository = "https://github.com/saethlin/flatvec"
 
 [dependencies]
-smallvec = { version = "1.4", features = ["union"], optional = true }
 
 [dev-dependencies]
 libflate = "1.0"

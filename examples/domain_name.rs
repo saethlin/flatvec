@@ -1,8 +1,9 @@
 use flatvec::{FlatVec, FromFlat, IntoFlat, Storage};
 
 fn main() {
-    for _ in 0..10_000 {
-        let mut names: FlatVec<_, u32> = FlatVec::new();
+    let mut names: FlatVec<_, u32> = FlatVec::new();
+    for _ in 0..100_000 {
+        names.clear();
         for _ in 0..1_000 {
             names.push(DomainNameRef {
                 ttl: 60,
@@ -10,19 +11,6 @@ fn main() {
                 name: &b"google.com"[..],
             });
         }
-        let mut count = 0;
-        for name in names.iter::<DomainNameRef>() {
-            assert_eq!(
-                name,
-                DomainNameRef {
-                    ttl: 60,
-                    time_seen: 31415,
-                    name: &b"google.com"[..],
-                }
-            );
-            count += 1;
-        }
-        assert_eq!(count, 1_000);
     }
 }
 
@@ -64,18 +52,14 @@ impl<'a> FromFlat<'a, DomainName> for DomainNameRef<'a> {
 
 impl IntoFlat<DomainName> for DomainNameRef<'_> {
     fn into_flat(self, mut store: Storage) {
-        store.extend(
-            self.time_seen
-                .to_ne_bytes()
-                .iter()
-                .chain(self.ttl.to_ne_bytes().iter())
-                .chain(self.name.iter()),
-        );
         /*
+        store.extend(&self.time_seen.to_ne_bytes());
+        store.extend(&self.ttl.to_ne_bytes());
+        store.extend(self.name);
+        */
         let data = store.allocate(4 + 4 + self.name.len());
         data[..4].copy_from_slice(&self.time_seen.to_ne_bytes());
         data[4..8].copy_from_slice(&self.ttl.to_ne_bytes());
         data[8..].copy_from_slice(self.name);
-        */
     }
 }

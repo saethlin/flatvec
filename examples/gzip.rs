@@ -14,7 +14,7 @@ struct WriteAdapter<'a>(Storage<'a>);
 
 impl std::io::Write for WriteAdapter<'_> {
     fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
-        self.0.extend(data.iter());
+        self.0.extend(data);
         Ok(data.len())
     }
 
