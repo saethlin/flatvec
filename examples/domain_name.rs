@@ -1,17 +1,38 @@
 use flatvec::{FlatVec, FromFlat, IntoFlat, Storage};
 
 fn main() {
-    let mut names: FlatVec<_, u32> = FlatVec::new();
-    for _ in 0..100_000 {
-        names.clear();
-        for _ in 0..1_000 {
-            names.push(DomainNameRef {
-                ttl: 60,
-                time_seen: 31415,
-                name: &b"google.com"[..],
-            });
+    let mut names: FlatVec<_, u32, u8> = FlatVec::new();
+    // Insert an owned type, extract a borrowed type
+    names.push(DomainName {
+        ttl: 60,
+        time_seen: 31415,
+        name: b"google.com".to_vec(),
+    });
+    assert_eq!(
+        names.get::<DomainNameRef>(0).unwrap(),
+        DomainNameRef {
+            ttl: 60,
+            time_seen: 31415,
+            name: &b"google.com"[..],
         }
-    }
+    );
+
+    names.clear();
+    // Insert a borrowed type, extract an owned type
+    // With the same FlatVec
+    names.push(DomainNameRef {
+        ttl: 60,
+        time_seen: 31415,
+        name: &b"google.com"[..],
+    });
+    assert_eq!(
+        names.get::<DomainName>(0).unwrap(),
+        DomainName {
+            ttl: 60,
+            time_seen: 31415,
+            name: b"google.com".to_vec(),
+        }
+    );
 }
 
 #[derive(PartialEq, Eq, Debug)]
@@ -28,7 +49,7 @@ pub struct DomainNameRef<'a> {
     name: &'a [u8],
 }
 
-impl FromFlat<'_, DomainName> for DomainName {
+impl FromFlat<'_, u8, DomainName> for DomainName {
     fn from_flat(data: &[u8]) -> Self {
         assert!(data.len() >= 8);
         Self {
@@ -39,7 +60,7 @@ impl FromFlat<'_, DomainName> for DomainName {
     }
 }
 
-impl<'a> FromFlat<'a, DomainName> for DomainNameRef<'a> {
+impl<'a> FromFlat<'a, u8, DomainName> for DomainNameRef<'a> {
     fn from_flat(data: &'a [u8]) -> Self {
         assert!(data.len() >= 8);
         Self {
@@ -50,13 +71,17 @@ impl<'a> FromFlat<'a, DomainName> for DomainNameRef<'a> {
     }
 }
 
-impl IntoFlat<DomainName> for DomainNameRef<'_> {
-    fn into_flat(self, mut store: Storage) {
-        /*
-        store.extend(&self.time_seen.to_ne_bytes());
-        store.extend(&self.ttl.to_ne_bytes());
-        store.extend(self.name);
-        */
+impl IntoFlat<u8, DomainName> for DomainName {
+    fn into_flat(self, mut store: Storage<u8>) {
+        let data = store.allocate(4 + 4 + self.name.len());
+        data[..4].copy_from_slice(&self.time_seen.to_ne_bytes());
+        data[4..8].copy_from_slice(&self.ttl.to_ne_bytes());
+        data[8..].copy_from_slice(&self.name);
+    }
+}
+
+impl IntoFlat<u8, DomainName> for DomainNameRef<'_> {
+    fn into_flat(self, mut store: Storage<u8>) {
         let data = store.allocate(4 + 4 + self.name.len());
         data[..4].copy_from_slice(&self.time_seen.to_ne_bytes());
         data[4..8].copy_from_slice(&self.ttl.to_ne_bytes());
