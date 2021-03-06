@@ -8,6 +8,10 @@ description = """
 An indirection-collapsing container that stores all its elements in at most 2 allocations
 """
 repository = "https://github.com/saethlin/flatvec"
+exclude = [
+    ".gitignore",
+    ".github/*",
+]
 
 [dependencies]
 
