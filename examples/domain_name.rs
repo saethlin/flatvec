@@ -1,7 +1,7 @@
 use flatvec::{FlatVec, FromFlat, IntoFlat, Storage};
 
 fn main() {
-    let mut names: FlatVec<_, u32, u8> = FlatVec::new();
+    let mut names: FlatVec<_, u32, u8, 3> = FlatVec::new();
     // Insert an owned type, extract a borrowed type
     names.push(DomainName {
         ttl: 60,

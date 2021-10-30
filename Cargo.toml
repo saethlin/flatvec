@@ -14,6 +14,7 @@ exclude = [
 ]
 
 [dependencies]
+tinyvec = { version = "1.5", features = ["alloc", "rustc_1_55"] }
 
 [dev-dependencies]
 libflate = "1.0"

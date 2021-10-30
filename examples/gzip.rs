@@ -1,7 +1,7 @@
 use flatvec::{FlatVec, FromFlat, IntoFlat, Storage};
 
 fn main() {
-    let mut vec: FlatVec<CompressedBytes, usize, _> = FlatVec::default();
+    let mut vec: FlatVec<CompressedBytes, usize, _, 3> = FlatVec::default();
     let data_to_insert = &b"ffffffffffffffffffffffffffffffffffffffffffffffffffff"[..];
     println!("Original length: {}", data_to_insert.len());
     vec.push(data_to_insert);

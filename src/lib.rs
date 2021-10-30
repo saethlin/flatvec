@@ -8,7 +8,7 @@
 //! `impl IntoFlat<T, u8> for T` and `impl FromFlat<'_, T, u8> for T` for some type `T` in your crate.
 //!
 //! But since the interface supports a generic backing type parameter, the flattened input objects
-//! can be stored as any representation that is convienent. `u8` is a reasonable default choice,
+//! can be stored as any representation that is convenient. `u8` is a reasonable default choice,
 //! but may not be quite right for your application.
 //!
 //! Additionally, since `FromFlat` has a lifetime parameter, accessing the stored objects in a
@@ -17,34 +17,41 @@
 //! A simple example of this is in `examples/domain_name.rs`.
 //!
 //! This interface is extremely powerful and essentially amounts to in-memory serialization and
-//! conversion all in one. For example, a user can construct a `FlatVec` that compreses all of its
+//! conversion all in one. For example, a user can construct a `FlatVec` that compresses all of its
 //! elements with gzip. This is not necessarily a good idea, but you can do it.
 
 #![forbid(unsafe_code)]
 
-use core::convert::{TryFrom, TryInto};
-use core::fmt;
-use core::iter;
-use core::marker::PhantomData;
-use core::str;
+use core::{
+    convert::{TryFrom, TryInto},
+    fmt, iter,
+    marker::PhantomData,
+    ops::Sub,
+    str,
+};
+use tinyvec::TinyVec;
 
 /// An indirection-collapsing container with minimal allocation
 ///
 /// Read as "An internally-flattening Vec of T, indexed by `IndexTy`, where each `T` is stored as a
-/// slice of `BackingTy`
-/// For simple use cases, you may want a type alias for `FlatVec<T, usize, u8>`, but under some
-/// workloads it is very profitable to pick a smaller `IndexTy`, possibly even `u8`.
+/// slice of `BackingTy`"
+/// For simple use cases, you may want a type alias for `FlatVec<T, usize, u8, 3>`, but under some
+/// workloads it is very profitable to pick a smaller `IndexTy`, possibly even `u8`, and a
+/// corresponding inline capacity.
 #[derive(Clone)]
-pub struct FlatVec<T, IndexTy, BackingTy> {
+pub struct FlatVec<T, IndexTy: Default, BackingTy, const INDEX_INLINE_LEN: usize> {
     data: Box<[BackingTy]>,
     data_len: usize,
-    ends: Vec<IndexTy>,
+    ends: TinyVec<[IndexTy; INDEX_INLINE_LEN]>,
     marker: PhantomData<T>,
 }
 
-impl<T, IndexTy, BackingTy> fmt::Debug for FlatVec<T, IndexTy, BackingTy>
+pub type MyFlatVec<T> = FlatVec<T, usize, u8, 3>;
+
+impl<T, IndexTy, BackingTy, const INDEX_INLINE_LEN: usize> fmt::Debug
+    for FlatVec<T, IndexTy, BackingTy, INDEX_INLINE_LEN>
 where
-    IndexTy: fmt::Debug,
+    IndexTy: fmt::Debug + Default,
     BackingTy: fmt::Debug,
 {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
@@ -55,21 +62,27 @@ where
     }
 }
 
-impl<T, IndexTy, BackingTy> Default for FlatVec<T, IndexTy, BackingTy> {
+impl<T, IndexTy, BackingTy, const INDEX_INLINE_LEN: usize> Default
+    for FlatVec<T, IndexTy, BackingTy, INDEX_INLINE_LEN>
+where
+    IndexTy: Default,
+{
     #[inline]
     fn default() -> Self {
         Self {
             data: Box::default(),
             data_len: 0,
-            ends: Vec::default(),
+            ends: TinyVec::default(),
             marker: PhantomData::default(),
         }
     }
 }
 
-impl<'a, T: 'a, IndexTy, BackingTy> FlatVec<T, IndexTy, BackingTy>
+impl<'a, T: 'a, IndexTy, BackingTy, const INDEX_INLINE_LEN: usize>
+    FlatVec<T, IndexTy, BackingTy, INDEX_INLINE_LEN>
 where
-    IndexTy: TryFrom<usize> + Copy + core::ops::Sub,
+    IndexTy: Default,
+    IndexTy: TryFrom<usize> + Copy + Sub,
     usize: TryFrom<IndexTy>,
     <IndexTy as TryFrom<usize>>::Error: fmt::Debug,
     <usize as TryFrom<IndexTy>>::Error: fmt::Debug,
@@ -161,9 +174,11 @@ where
     }
 }
 
-impl<'a, T: 'a, IndexTy, BackingTy> FlatVec<T, IndexTy, BackingTy>
+impl<'a, T: 'a, IndexTy, BackingTy, const INDEX_INLINE_LEN: usize>
+    FlatVec<T, IndexTy, BackingTy, INDEX_INLINE_LEN>
 where
-    IndexTy: TryFrom<usize> + Copy + core::ops::Sub,
+    IndexTy: Default,
+    IndexTy: TryFrom<usize> + Copy + Sub,
     usize: TryFrom<IndexTy>,
     <IndexTy as TryFrom<usize>>::Error: fmt::Debug,
     <usize as TryFrom<IndexTy>>::Error: fmt::Debug,
@@ -190,6 +205,11 @@ where
     }
 }
 
+// On the surface, this Box juggling seems like a re-implementation of std::vec::Vec.
+// The difference is our allocated memory is always default-initialized, so that we can implement
+// Storage::allocate, which returns a slice of BackingTy that is not yet used for an object in the
+// FlatVec. So just like Vec we have a length and capacity, but unlike Vec the objects beyond the
+// container's length are guaranteed to be initialized and thus can be accessed from safe code.
 /// A wrapper over the innards of a `FlatVec` which exposes mutating operations which cannot
 /// corrupt other elements when inserting a new element.
 pub struct Storage<'a, BackingTy> {
@@ -237,8 +257,8 @@ where
 
     /// Inserts the `BackingTy` yielded by `iter`.
     ///
-    /// In general, due to missed optimizations, this is ~2x slower than calling `allocate` when
-    /// the exact size of the inserted object is known.
+    /// In general, this is ~2x slower than calling `allocate` when the exact size of the inserted
+    /// object is known.
     #[inline]
     pub fn extend<Iter>(&mut self, iter: Iter)
     where
@@ -294,24 +314,12 @@ pub trait FromFlat<'a, BackingTy, Flattened> {
     fn from_flat(data: &'a [BackingTy]) -> Self;
 }
 
-impl IntoFlat<u8, String> for String {
-    #[inline]
-    fn into_flat(self, mut store: Storage<u8>) {
-        store.extend(self.bytes());
-    }
-}
-
-impl FromFlat<'_, u8, String> for String {
-    #[inline]
-    fn from_flat(data: &[u8]) -> Self {
-        String::from_utf8(data.to_vec()).unwrap()
-    }
-}
-
 impl IntoFlat<u8, String> for &str {
     #[inline]
     fn into_flat(self, mut store: Storage<u8>) {
-        store.extend(self.bytes());
+        store
+            .allocate(self.as_bytes().len())
+            .copy_from_slice(self.as_bytes());
     }
 }
 
@@ -333,16 +341,6 @@ where
     }
 }
 
-impl<BackingTy> FromFlat<'_, BackingTy, Vec<BackingTy>> for Vec<BackingTy>
-where
-    BackingTy: Clone,
-{
-    #[inline]
-    fn from_flat(data: &[BackingTy]) -> Vec<BackingTy> {
-        data.to_vec()
-    }
-}
-
 impl<'a, BackingTy> FromFlat<'a, BackingTy, Vec<BackingTy>> for &'a [BackingTy] {
     #[inline]
     fn from_flat(data: &'a [BackingTy]) -> &'a [BackingTy] {
@@ -356,20 +354,84 @@ mod tests {
 
     #[test]
     fn push_get() {
-        let mut names: FlatVec<String, usize, u8> = FlatVec::default();
+        let mut names: FlatVec<String, usize, u8, 3> = FlatVec::new();
+        assert!(names.is_empty());
+        assert_eq!(names.len(), 0);
+        assert_eq!(names.data_len(), 0);
+
         names.push("Cerryl");
-        names.push("Jeslek".to_string());
+        assert_eq!(names.len(), 1);
+        assert!(!names.is_empty());
+        assert_eq!(names.data_len(), 6);
+
+        names.push("Jeslek");
+        assert_eq!(names.len(), 2);
+        assert_eq!(names.data_len(), 12);
+
         assert_eq!(names.get(0), Some("Cerryl"));
         assert_eq!(names.get(1), Some("Jeslek"));
-        assert_eq!(names.get::<String>(2), None);
+        assert_eq!(names.get::<&str>(2), None);
+
+        assert_eq!(names.get(0), Some("Cerryl"));
+        assert_eq!(names.get(1), Some("Jeslek"));
+        assert_eq!(names.get::<&str>(2), None);
+
+        names.clear();
+        assert_eq!(names.len(), 0);
+        assert!(names.is_empty());
+        assert_eq!(names.data_len(), 0);
     }
 
     #[test]
     fn iter() {
-        let mut names: FlatVec<String, usize, u8> = FlatVec::default();
-        names.push("Cerryl".to_string());
-        names.push("Jeslek".to_string());
-        let as_vec = names.iter::<String>().collect::<Vec<_>>();
+        let mut names: FlatVec<String, usize, u8, 3> = FlatVec::new();
+        names.push("Cerryl");
+        names.push("Jeslek");
+        let as_vec = names.iter().collect::<Vec<&str>>();
         assert_eq!(as_vec, vec!["Cerryl".to_string(), "Jeslek".to_string()]);
+    }
+
+    #[test]
+    fn remove() {
+        let mut places: FlatVec<String, usize, u8, 3> = FlatVec::new();
+        places.push("Cyador");
+        places.push("Recluce");
+        places.push("Hamor");
+
+        assert_eq!(places.get(1), Some("Recluce"));
+        assert_eq!(places.get(2), Some("Hamor"));
+        places.remove(1);
+        assert_eq!(places.get(1), Some("Hamor"));
+        assert_eq!(places.get::<&str>(2), None);
+
+        places.clear();
+        places.push("Cyador");
+        places.push("Recluce");
+        places.push("Hamor");
+
+        assert_eq!(places.get(0), Some("Cyador"));
+        assert_eq!(places.get(1), Some("Recluce"));
+        places.remove(0);
+        assert_eq!(places.get(0), Some("Recluce"));
+        assert_eq!(places.get(1), Some("Hamor"));
+    }
+
+    struct Expander(usize);
+
+    impl IntoFlat<usize, Vec<usize>> for Expander {
+        fn into_flat(self, mut storage: Storage<'_, usize>) {
+            storage.extend(0..self.0);
+        }
+    }
+
+    #[test]
+    fn storage_extend() {
+        let mut data: FlatVec<Vec<usize>, usize, usize, 3> = FlatVec::new();
+        data.push(Expander(10));
+        assert_eq!(data.data_len(), 10);
+        assert_eq!(data.get(0), Some(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9][..]));
+        data.push(0..2);
+        assert_eq!(data.data_len(), 12);
+        assert_eq!(data.get(1), Some(&[0, 1][..]));
     }
 }
