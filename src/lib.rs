@@ -9,7 +9,11 @@
 //!
 //! But since the interface supports a generic backing type parameter, the flattened input objects
 //! can be stored as any representation that is convenient. `u8` is a reasonable default choice,
-//! but may not be quite right for your application.
+//! but may not be quite right for your application. For example, you may want to write this type
+//! alias:
+//! ```rust
+//! pub type FlatVec<T> = flatvec::FlatVec<T, usize, u8, 3>;
+//! ```
 //!
 //! Additionally, since `FromFlat` has a lifetime parameter, accessing the stored objects in a
 //! `FlatVec` can be a zero-copy operation. For example, one may flatten objects with indirections
@@ -45,8 +49,6 @@ pub struct FlatVec<T, IndexTy: Default, BackingTy, const INDEX_INLINE_LEN: usize
     ends: TinyVec<[IndexTy; INDEX_INLINE_LEN]>,
     marker: PhantomData<T>,
 }
-
-pub type MyFlatVec<T> = FlatVec<T, usize, u8, 3>;
 
 impl<T, IndexTy, BackingTy, const INDEX_INLINE_LEN: usize> fmt::Debug
     for FlatVec<T, IndexTy, BackingTy, INDEX_INLINE_LEN>
